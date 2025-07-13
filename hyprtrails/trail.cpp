@@ -16,8 +16,8 @@ void CTrail::onTick() {
     const auto PWINDOW = m_pWindow.lock();
 
     if (m_iTimer > **PHISTORYSTEP) {
-        m_dLastGeoms.push_front({box{(float)PWINDOW->m_vRealPosition->value().x, (float)PWINDOW->m_vRealPosition->value().y, (float)PWINDOW->m_vRealSize->value().x,
-                                     (float)PWINDOW->m_vRealSize->value().y},
+        m_dLastGeoms.push_front({box{(float)PWINDOW->m_realPosition->value().x, (float)PWINDOW->m_realPosition->value().y, (float)PWINDOW->m_realSize->value().x,
+                                     (float)PWINDOW->m_realSize->value().y},
                                  std::chrono::system_clock::now()});
         while (m_dLastGeoms.size() > **PHISTORYPOINTS)
             m_dLastGeoms.pop_back();
@@ -32,8 +32,8 @@ void CTrail::onTick() {
 }
 
 CTrail::CTrail(PHLWINDOW pWindow) : IHyprWindowDecoration(pWindow), m_pWindow(pWindow) {
-    m_vLastWindowPos  = pWindow->m_vRealPosition->value();
-    m_vLastWindowSize = pWindow->m_vRealSize->value();
+    m_lastWindowPos  = pWindow->m_realPosition->value();
+    m_lastWindowSize = pWindow->m_realSize->value();
 
     pTickCb = HyprlandAPI::registerCallbackDynamic(PHANDLE, "trailTick", [this](void* self, SCallbackInfo& info, std::any data) { this->onTick(); });
 }
@@ -86,15 +86,15 @@ void CTrail::draw(PHLMONITOR pMonitor, const float& a) {
 
     const auto PWINDOW = m_pWindow.lock();
 
-    if (!PWINDOW->m_sWindowData.decorate.valueOrDefault())
+    if (!PWINDOW->m_windowData.decorate.valueOrDefault())
         return;
 
     auto data = CTrailPassElement::STrailData{this, a};
-    g_pHyprRenderer->m_sRenderPass.add(makeShared<CTrailPassElement>(data));
+    g_pHyprRenderer->m_renderPass.add(makeUnique<CTrailPassElement>(data));
 }
 
 void CTrail::renderPass(PHLMONITOR pMonitor, const float& a) {
-    const auto PWINDOW = m_pWindow.lock();
+    const auto         PWINDOW = m_pWindow.lock();
 
     static auto* const PBEZIERSTEP    = (Hyprlang::FLOAT* const*)HyprlandAPI::getConfigValue(PHANDLE, "plugin:hyprtrails:bezier_step")->getDataStaticPtr();
     static auto* const PPOINTSPERSTEP = (Hyprlang::INT* const*)HyprlandAPI::getConfigValue(PHANDLE, "plugin:hyprtrails:points_per_step")->getDataStaticPtr();
@@ -106,41 +106,37 @@ void CTrail::renderPass(PHLMONITOR pMonitor, const float& a) {
         return;
 
     box thisbox =
-        box{(float)PWINDOW->m_vRealPosition->value().x, (float)PWINDOW->m_vRealPosition->value().y, (float)PWINDOW->m_vRealSize->value().x, (float)PWINDOW->m_vRealSize->value().y};
-    CBox wlrbox = {thisbox.x - pMonitor->vecPosition.x, thisbox.y - pMonitor->vecPosition.y, thisbox.w, thisbox.h};
-    wlrbox.scale(pMonitor->scale).round();
+        box{(float)PWINDOW->m_realPosition->value().x, (float)PWINDOW->m_realPosition->value().y, (float)PWINDOW->m_realSize->value().x, (float)PWINDOW->m_realSize->value().y};
+    CBox wlrbox = {thisbox.x - pMonitor->m_position.x, thisbox.y - pMonitor->m_position.y, thisbox.w, thisbox.h};
+    wlrbox.scale(pMonitor->m_scale).round();
 
     g_pHyprOpenGL->scissor(nullptr); // allow the entire window and stencil to render
     glClearStencil(0);
     glClear(GL_STENCIL_BUFFER_BIT);
 
-    glEnable(GL_STENCIL_TEST);
+    g_pHyprOpenGL->setCapStatus(GL_STENCIL_TEST, true);
 
     glStencilFunc(GL_ALWAYS, 1, -1);
     glStencilOp(GL_KEEP, GL_KEEP, GL_REPLACE);
 
     glColorMask(GL_FALSE, GL_FALSE, GL_FALSE, GL_FALSE);
-    g_pHyprOpenGL->renderRect(wlrbox, CHyprColor(0, 0, 0, 0), PWINDOW->rounding() * pMonitor->scale, PWINDOW->roundingPower());
+    g_pHyprOpenGL->renderRect(wlrbox, CHyprColor(0, 0, 0, 0), PWINDOW->rounding() * pMonitor->m_scale, PWINDOW->roundingPower());
     glColorMask(GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE);
 
     glStencilFunc(GL_NOTEQUAL, 1, -1);
     glStencilOp(GL_KEEP, GL_KEEP, GL_REPLACE);
 
-    CBox   monbox = {0, 0, g_pHyprOpenGL->m_RenderData.pMonitor->vecTransformedSize.x, g_pHyprOpenGL->m_RenderData.pMonitor->vecTransformedSize.y};
+    CBox   monbox = {0, 0, g_pHyprOpenGL->m_renderData.pMonitor->m_transformedSize.x, g_pHyprOpenGL->m_renderData.pMonitor->m_transformedSize.y};
 
-    Mat3x3 matrix   = g_pHyprOpenGL->m_RenderData.monitorProjection.projectBox(monbox, wlTransformToHyprutils(invertTransform(WL_OUTPUT_TRANSFORM_NORMAL)), monbox.rot);
-    Mat3x3 glMatrix = g_pHyprOpenGL->m_RenderData.projection.copy().multiply(matrix);
+    Mat3x3 matrix   = g_pHyprOpenGL->m_renderData.monitorProjection.projectBox(monbox, wlTransformToHyprutils(invertTransform(WL_OUTPUT_TRANSFORM_NORMAL)), monbox.rot);
+    Mat3x3 glMatrix = g_pHyprOpenGL->m_renderData.projection.copy().multiply(matrix);
 
     g_pHyprOpenGL->blend(true);
 
     glUseProgram(g_pGlobalState->trailShader.program);
 
-#ifndef GLES2
-    glUniformMatrix3fv(g_pGlobalState->trailShader.proj, 1, GL_TRUE, glMatrix.getMatrix().data());
-#else
     glMatrix.transpose();
-    glUniformMatrix3fv(g_pGlobalState->trailShader.proj, 1, GL_FALSE, glMatrix.getMatrix().data());
-#endif
+    g_pGlobalState->trailShader.setUniformMatrix3fv(SHADER_PROJ, 1, GL_FALSE, glMatrix.getMatrix());
 
     std::vector<point2>   points;
     std::vector<Vector2D> bezierPts;
@@ -154,7 +150,7 @@ void CTrail::renderPass(PHLMONITOR pMonitor, const float& a) {
     };
 
     auto dist = [&](const point2& a, const point2& b) -> float {
-        Vector2D diff = Vector2D{a.x - b.x, a.y - b.y} * pMonitor->vecSize;
+        Vector2D diff = Vector2D{a.x - b.x, a.y - b.y} * pMonitor->m_size;
         return std::sqrt(diff.x * diff.x + diff.y * diff.y);
     };
 
@@ -162,25 +158,25 @@ void CTrail::renderPass(PHLMONITOR pMonitor, const float& a) {
 
     float    dists[2] = {0, 0};
 
-    Vector2D mainVec      = {originalCoeff / pMonitor->vecSize.x, originalCoeff / pMonitor->vecSize.y};
-    Vector2D windowMiddle = PWINDOW->middle() - pMonitor->vecPosition;
+    Vector2D mainVec      = {originalCoeff / pMonitor->m_size.x, originalCoeff / pMonitor->m_size.y};
+    Vector2D windowMiddle = PWINDOW->middle() - pMonitor->m_position;
 
     points.push_back(
-        Vector2D{cos(0) * mainVec.x - sin(0) * mainVec.y + windowMiddle.x / pMonitor->vecSize.x, sin(0) * mainVec.x + cos(0) * mainVec.y + windowMiddle.y / pMonitor->vecSize.y});
-    points.push_back(Vector2D{cos(-M_PI_2) * mainVec.x - sin(-M_PI_2) * mainVec.y + windowMiddle.x / pMonitor->vecSize.x,
-                              sin(-M_PI_2) * mainVec.x + cos(-M_PI_2) * mainVec.y + windowMiddle.y / pMonitor->vecSize.y});
-    points.push_back(Vector2D{cos(M_PI_2) * mainVec.x - sin(M_PI_2) * mainVec.y + windowMiddle.x / pMonitor->vecSize.x,
-                              sin(M_PI_2) * mainVec.x + cos(M_PI_2) * mainVec.y + windowMiddle.y / pMonitor->vecSize.y});
-    points.push_back(Vector2D{cos(M_PI) * mainVec.x - sin(M_PI) * mainVec.y + windowMiddle.x / pMonitor->vecSize.x,
-                              sin(M_PI) * mainVec.x + cos(M_PI) * mainVec.y + windowMiddle.y / pMonitor->vecSize.y});
+        Vector2D{cos(0) * mainVec.x - sin(0) * mainVec.y + windowMiddle.x / pMonitor->m_size.x, sin(0) * mainVec.x + cos(0) * mainVec.y + windowMiddle.y / pMonitor->m_size.y});
+    points.push_back(Vector2D{cos(-M_PI_2) * mainVec.x - sin(-M_PI_2) * mainVec.y + windowMiddle.x / pMonitor->m_size.x,
+                              sin(-M_PI_2) * mainVec.x + cos(-M_PI_2) * mainVec.y + windowMiddle.y / pMonitor->m_size.y});
+    points.push_back(Vector2D{cos(M_PI_2) * mainVec.x - sin(M_PI_2) * mainVec.y + windowMiddle.x / pMonitor->m_size.x,
+                              sin(M_PI_2) * mainVec.x + cos(M_PI_2) * mainVec.y + windowMiddle.y / pMonitor->m_size.y});
+    points.push_back(Vector2D{cos(M_PI) * mainVec.x - sin(M_PI) * mainVec.y + windowMiddle.x / pMonitor->m_size.x,
+                              sin(M_PI) * mainVec.x + cos(M_PI) * mainVec.y + windowMiddle.y / pMonitor->m_size.y});
 
     pointsForBezier.push_back(windowMiddle);
     agesForBezier.push_back(0);
 
     for (size_t i = 0; i < m_dLastGeoms.size(); i += 1) {
         box box = m_dLastGeoms[i].first;
-        box.x -= pMonitor->vecPosition.x;
-        box.y -= pMonitor->vecPosition.y;
+        box.x -= pMonitor->m_position.x;
+        box.y -= pMonitor->m_position.y;
         Vector2D middle = {box.x + box.w / 2.0, box.y + box.h / 2.0};
 
         if (middle == pointsForBezier[pointsForBezier.size() - 1])
@@ -193,7 +189,7 @@ void CTrail::renderPass(PHLMONITOR pMonitor, const float& a) {
     if (pointsForBezier.size() < 3) {
         glClearStencil(0);
         glClear(GL_STENCIL_BUFFER_BIT);
-        glDisable(GL_STENCIL_TEST);
+        g_pHyprOpenGL->setCapStatus(GL_STENCIL_TEST, false);
 
         glStencilMask(-1);
         glStencilFunc(GL_ALWAYS, 1, 0xFF);
@@ -233,38 +229,38 @@ void CTrail::renderPass(PHLMONITOR pMonitor, const float& a) {
             float approxAge =
                 agesForBezier[static_cast<int>(ageFloor)] + (agesForBezier[static_cast<int>(ageCeil)] - agesForBezier[static_cast<int>(ageFloor)]) * (ageCoeff - ageFloor);
             float    coeff  = originalCoeff * (1.0 - (approxAge / maxAge));
-            Vector2D newVec = {vecNormal.x * coeff / pMonitor->vecSize.x, vecNormal.y * coeff / pMonitor->vecSize.y};
+            Vector2D newVec = {vecNormal.x * coeff / pMonitor->m_size.x, vecNormal.y * coeff / pMonitor->m_size.y};
 
             if ((newVec.x == 0 && newVec.y == 0) || std::isnan(newVec.x) || std::isnan(newVec.y))
                 continue;
 
             // rotate by 90 and -90 and add middle
-            points.push_back(Vector2D{cos(M_PI_2) * newVec.x - sin(M_PI_2) * newVec.y + middle.x / pMonitor->vecSize.x,
-                                      sin(M_PI_2) * newVec.x + cos(M_PI_2) * newVec.y + middle.y / pMonitor->vecSize.y});
-            points.push_back(Vector2D{cos(-M_PI_2) * newVec.x - sin(-M_PI_2) * newVec.y + middle.x / pMonitor->vecSize.x,
-                                      sin(-M_PI_2) * newVec.x + cos(-M_PI_2) * newVec.y + middle.y / pMonitor->vecSize.y});
+            points.push_back(Vector2D{cos(M_PI_2) * newVec.x - sin(M_PI_2) * newVec.y + middle.x / pMonitor->m_size.x,
+                                      sin(M_PI_2) * newVec.x + cos(M_PI_2) * newVec.y + middle.y / pMonitor->m_size.y});
+            points.push_back(Vector2D{cos(-M_PI_2) * newVec.x - sin(-M_PI_2) * newVec.y + middle.x / pMonitor->m_size.x,
+                                      sin(-M_PI_2) * newVec.x + cos(-M_PI_2) * newVec.y + middle.y / pMonitor->m_size.y});
         }
     }
 
-    box thisboxopengl = box{(PWINDOW->m_vRealPosition->value().x - pMonitor->vecPosition.x) / pMonitor->vecSize.x,
-                            (PWINDOW->m_vRealPosition->value().y - pMonitor->vecPosition.y) / pMonitor->vecSize.y,
-                            (PWINDOW->m_vRealPosition->value().x + PWINDOW->m_vRealSize->value().x) / pMonitor->vecSize.x,
-                            (PWINDOW->m_vRealPosition->value().y + PWINDOW->m_vRealSize->value().y) / pMonitor->vecSize.y};
-    glUniform4f(g_pGlobalState->trailShader.gradient, thisboxopengl.x, thisboxopengl.y, thisboxopengl.w, thisboxopengl.h);
-    glUniform4f(g_pGlobalState->trailShader.color, COLOR.r, COLOR.g, COLOR.b, COLOR.a);
+    box thisboxopengl =
+        box{(PWINDOW->m_realPosition->value().x - pMonitor->m_position.x) / pMonitor->m_size.x, (PWINDOW->m_realPosition->value().y - pMonitor->m_position.y) / pMonitor->m_size.y,
+            (PWINDOW->m_realPosition->value().x + PWINDOW->m_realSize->value().x) / pMonitor->m_size.x,
+            (PWINDOW->m_realPosition->value().y + PWINDOW->m_realSize->value().y) / pMonitor->m_size.y};
+    glUniform4f(g_pGlobalState->trailShader.uniformLocations[SHADER_GRADIENT], thisboxopengl.x, thisboxopengl.y, thisboxopengl.w, thisboxopengl.h);
+    glUniform4f(g_pGlobalState->trailShader.uniformLocations[SHADER_COLOR], COLOR.r, COLOR.g, COLOR.b, COLOR.a);
 
     CBox transformedBox = monbox;
-    transformedBox.transform(wlTransformToHyprutils(invertTransform(g_pHyprOpenGL->m_RenderData.pMonitor->transform)), g_pHyprOpenGL->m_RenderData.pMonitor->vecTransformedSize.x,
-                             g_pHyprOpenGL->m_RenderData.pMonitor->vecTransformedSize.y);
+    transformedBox.transform(wlTransformToHyprutils(invertTransform(g_pHyprOpenGL->m_renderData.pMonitor->m_transform)), g_pHyprOpenGL->m_renderData.pMonitor->m_transformedSize.x,
+                             g_pHyprOpenGL->m_renderData.pMonitor->m_transformedSize.y);
 
-    glVertexAttribPointer(g_pGlobalState->trailShader.posAttrib, 2, GL_FLOAT, GL_FALSE, 0, (float*)points.data());
+    glVertexAttribPointer(g_pGlobalState->trailShader.uniformLocations[SHADER_POS_ATTRIB], 2, GL_FLOAT, GL_FALSE, 0, (float*)points.data());
 
-    glEnableVertexAttribArray(g_pGlobalState->trailShader.posAttrib);
+    glEnableVertexAttribArray(g_pGlobalState->trailShader.uniformLocations[SHADER_POS_ATTRIB]);
 
-    if (g_pHyprOpenGL->m_RenderData.clipBox.width != 0 && g_pHyprOpenGL->m_RenderData.clipBox.height != 0) {
-        CRegion damageClip{g_pHyprOpenGL->m_RenderData.clipBox.x, g_pHyprOpenGL->m_RenderData.clipBox.y, g_pHyprOpenGL->m_RenderData.clipBox.width,
-                           g_pHyprOpenGL->m_RenderData.clipBox.height};
-        damageClip.intersect(g_pHyprOpenGL->m_RenderData.damage);
+    if (g_pHyprOpenGL->m_renderData.clipBox.width != 0 && g_pHyprOpenGL->m_renderData.clipBox.height != 0) {
+        CRegion damageClip{g_pHyprOpenGL->m_renderData.clipBox.x, g_pHyprOpenGL->m_renderData.clipBox.y, g_pHyprOpenGL->m_renderData.clipBox.width,
+                           g_pHyprOpenGL->m_renderData.clipBox.height};
+        damageClip.intersect(g_pHyprOpenGL->m_renderData.damage);
 
         if (!damageClip.empty()) {
             for (auto& RECT : damageClip.getRects()) {
@@ -273,17 +269,17 @@ void CTrail::renderPass(PHLMONITOR pMonitor, const float& a) {
             }
         }
     } else {
-        for (auto& RECT : g_pHyprOpenGL->m_RenderData.damage.getRects()) {
+        for (auto& RECT : g_pHyprOpenGL->m_renderData.damage.getRects()) {
             g_pHyprOpenGL->scissor(&RECT);
             glDrawArrays(GL_TRIANGLE_STRIP, 0, points.size());
         }
     }
 
-    glDisableVertexAttribArray(g_pGlobalState->trailShader.posAttrib);
+    glDisableVertexAttribArray(g_pGlobalState->trailShader.uniformLocations[SHADER_POS_ATTRIB]);
 
     glClearStencil(0);
     glClear(GL_STENCIL_BUFFER_BIT);
-    glDisable(GL_STENCIL_TEST);
+    g_pHyprOpenGL->setCapStatus(GL_STENCIL_TEST, false);
 
     glStencilMask(-1);
     glStencilFunc(GL_ALWAYS, 1, 0xFF);
@@ -307,13 +303,13 @@ void CTrail::renderPass(PHLMONITOR pMonitor, const float& a) {
     }
 
     // bring back to global coords
-    minX *= pMonitor->vecSize.x;
-    minY *= pMonitor->vecSize.y;
-    maxX *= pMonitor->vecSize.x;
-    maxY *= pMonitor->vecSize.y;
+    minX *= pMonitor->m_size.x;
+    minY *= pMonitor->m_size.y;
+    maxX *= pMonitor->m_size.x;
+    maxY *= pMonitor->m_size.y;
 
-    m_bLastBox.x      = minX + pMonitor->vecPosition.x;
-    m_bLastBox.y      = minY + pMonitor->vecPosition.y;
+    m_bLastBox.x      = minX + pMonitor->m_position.x;
+    m_bLastBox.y      = minY + pMonitor->m_position.y;
     m_bLastBox.width  = maxX - minX;
     m_bLastBox.height = maxY - minY;
 
@@ -325,18 +321,18 @@ eDecorationType CTrail::getDecorationType() {
 }
 
 void CTrail::updateWindow(PHLWINDOW pWindow) {
-    const auto PWORKSPACE = pWindow->m_pWorkspace;
+    const auto PWORKSPACE = pWindow->m_workspace;
 
-    const auto WORKSPACEOFFSET = PWORKSPACE && !pWindow->m_bPinned ? PWORKSPACE->m_vRenderOffset->value() : Vector2D();
+    const auto WORKSPACEOFFSET = PWORKSPACE && !pWindow->m_pinned ? PWORKSPACE->m_renderOffset->value() : Vector2D();
 
-    m_vLastWindowPos  = pWindow->m_vRealPosition->value() + WORKSPACEOFFSET;
-    m_vLastWindowSize = pWindow->m_vRealSize->value();
+    m_lastWindowPos  = pWindow->m_realPosition->value() + WORKSPACEOFFSET;
+    m_lastWindowSize = pWindow->m_realSize->value();
 
     damageEntire();
 }
 
 void CTrail::damageEntire() {
-    CBox dm = {(int)(m_vLastWindowPos.x - m_seExtents.topLeft.x), (int)(m_vLastWindowPos.y - m_seExtents.topLeft.y),
-               (int)(m_vLastWindowSize.x + m_seExtents.topLeft.x + m_seExtents.bottomRight.x), (int)m_seExtents.topLeft.y};
+    CBox dm = {(int)(m_lastWindowPos.x - m_seExtents.topLeft.x), (int)(m_lastWindowPos.y - m_seExtents.topLeft.y),
+               (int)(m_lastWindowSize.x + m_seExtents.topLeft.x + m_seExtents.bottomRight.x), (int)m_seExtents.topLeft.y};
     g_pHyprRenderer->damageBox(dm);
 }

@@ -76,7 +76,7 @@ GLuint CreateProgram(const std::string& vert, const std::string& frag) {
 int onTick(void* data) {
     EMIT_HOOK_EVENT("trailTick", nullptr);
 
-    const int TIMEOUT = g_pHyprRenderer->m_pMostHzMonitor ? 1000.0 / g_pHyprRenderer->m_pMostHzMonitor->refreshRate : 16;
+    const int TIMEOUT = g_pHyprRenderer->m_mostHzMonitor ? 1000.0 / g_pHyprRenderer->m_mostHzMonitor->m_refreshRate : 16;
     wl_event_source_timer_update(g_pGlobalState->tick, TIMEOUT);
 
     return 0;
@@ -85,16 +85,15 @@ int onTick(void* data) {
 void initGlobal() {
     g_pHyprRenderer->makeEGLCurrent();
 
-    GLuint prog                           = CreateProgram(QUADTRAIL, FRAGTRAIL);
-    g_pGlobalState->trailShader.program   = prog;
-    g_pGlobalState->trailShader.proj      = glGetUniformLocation(prog, "proj");
-    g_pGlobalState->trailShader.tex       = glGetUniformLocation(prog, "tex");
-    g_pGlobalState->trailShader.color     = glGetUniformLocation(prog, "color");
-    g_pGlobalState->trailShader.texAttrib = glGetAttribLocation(prog, "colors");
-    g_pGlobalState->trailShader.posAttrib = glGetAttribLocation(prog, "pos");
-    g_pGlobalState->trailShader.gradient  = glGetUniformLocation(prog, "snapshots");
+    GLuint prog                                                     = CreateProgram(QUADTRAIL, FRAGTRAIL);
+    g_pGlobalState->trailShader.program                             = prog;
+    g_pGlobalState->trailShader.uniformLocations[SHADER_PROJ]       = glGetUniformLocation(prog, "proj");
+    g_pGlobalState->trailShader.uniformLocations[SHADER_TEX]        = glGetUniformLocation(prog, "tex");
+    g_pGlobalState->trailShader.uniformLocations[SHADER_COLOR]      = glGetUniformLocation(prog, "color");
+    g_pGlobalState->trailShader.uniformLocations[SHADER_POS_ATTRIB] = glGetAttribLocation(prog, "pos");
+    g_pGlobalState->trailShader.uniformLocations[SHADER_GRADIENT]   = glGetUniformLocation(prog, "snapshots");
 
-    g_pGlobalState->tick = wl_event_loop_add_timer(g_pCompositor->m_sWLEventLoop, &onTick, nullptr);
+    g_pGlobalState->tick = wl_event_loop_add_timer(g_pCompositor->m_wlEventLoop, &onTick, nullptr);
     wl_event_source_timer_update(g_pGlobalState->tick, 1);
 }
 
@@ -121,8 +120,8 @@ APICALL EXPORT PLUGIN_DESCRIPTION_INFO PLUGIN_INIT(HANDLE handle) {
     initGlobal();
 
     // add deco to existing windows
-    for (auto& w : g_pCompositor->m_vWindows) {
-        if (w->isHidden() || !w->m_bIsMapped)
+    for (auto& w : g_pCompositor->m_windows) {
+        if (w->isHidden() || !w->m_isMapped)
             continue;
 
         HyprlandAPI::addWindowDecoration(PHANDLE, w, makeUnique<CTrail>(w));
@@ -137,5 +136,5 @@ APICALL EXPORT PLUGIN_DESCRIPTION_INFO PLUGIN_INIT(HANDLE handle) {
 
 APICALL EXPORT void PLUGIN_EXIT() {
     wl_event_source_remove(g_pGlobalState->tick);
-    g_pHyprRenderer->m_sRenderPass.removeAllOfType("CTrailPassElement");
+    g_pHyprRenderer->m_renderPass.removeAllOfType("CTrailPassElement");
 }

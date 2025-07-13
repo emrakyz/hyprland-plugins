@@ -47,8 +47,8 @@ APICALL EXPORT PLUGIN_DESCRIPTION_INFO PLUGIN_INIT(HANDLE handle) {
     static auto P = HyprlandAPI::registerCallbackDynamic(PHANDLE, "openWindow", [&](void* self, SCallbackInfo& info, std::any data) { onNewWindow(self, data); });
 
     // add deco to existing windows
-    for (auto& w : g_pCompositor->m_vWindows) {
-        if (w->isHidden() || !w->m_bIsMapped)
+    for (auto& w : g_pCompositor->m_windows) {
+        if (w->isHidden() || !w->m_isMapped)
             continue;
 
         HyprlandAPI::addWindowDecoration(PHANDLE, w, makeUnique<CBordersPlusPlus>(w));
@@ -60,5 +60,5 @@ APICALL EXPORT PLUGIN_DESCRIPTION_INFO PLUGIN_INIT(HANDLE handle) {
 }
 
 APICALL EXPORT void PLUGIN_EXIT() {
-    g_pHyprRenderer->m_sRenderPass.removeAllOfType("CBorderPPPassElement");
+    g_pHyprRenderer->m_renderPass.removeAllOfType("CBorderPPPassElement");
 }
